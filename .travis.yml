@@ -1,0 +1,44 @@
+language: bash
+
+services:
+  - docker
+
+before_install:
+  - sudo apt-get -y install libssl-dev
+  - >-
+    # Clone quiche and BoringSSL:
+    git clone --recursive https://github.com/cloudflare/quiche
+    # Build BoringSSL (it needs to be built manually so it can be reused with curl):
+    cd quiche/deps/boringssl
+    mkdir build
+    cd build
+    cmake -DCMAKE_POSITION_INDEPENDENT_CODE=on ..
+    make
+    cd ..
+    mkdir -p .openssl/lib
+    cp build/crypto/libcrypto.a build/ssl/libssl.a .openssl/lib
+    ln -s $PWD/include .openssl
+    # Build quiche
+    cd ../..
+    QUICHE_BSSL_PATH=$PWD/deps/boringssl cargo build --release --features pkg-config-meta
+    # Clone and build curl:
+    cd ..
+    git clone https://github.com/curl/curl
+    cd curl
+    ./buildconf
+    ./configure LDFLAGS="-Wl,-rpath,$PWD/../quiche/target/release" --with-ssl=$PWD/../quiche/deps/boringssl/.openssl --with-quiche=$PWD/../quiche/target/release
+    make
+    ls
+
+install:
+  - docker build -t nginx-http3 .
+  - >-
+    docker run --name nginx-http3 \
+      -d \
+      -p 80:80 \
+      -p 443:443/tcp \
+      -p 443:443/udp \
+      nginx-http3:latest
+
+script:
+  - docker ps | grep -q nginx-http3
